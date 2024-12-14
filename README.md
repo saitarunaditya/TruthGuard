@@ -1,7 +1,7 @@
 # TruthGuard
 Fake News Detection AI
 
-<h2>Tasks<h2>
+<h2>Tasks</h2>
   
 <h3>Dataset preparation</h3>
 
@@ -36,5 +36,5 @@ Design the dashboard to display alerts with confidence scores, sources, and veri
 
 <h3>Testing and validation</h3>
 
-<p>Perform real-time testing with live or recorded broadcasts.
-Use ground-truth data from fact-checking organizations to evaluate the accuracy and reliability of your tool</p>
+<ol><li>Perform real-time testing with live or recorded broadcasts.</li>
+<li>Use ground-truth data from fact-checking organizations to evaluate the accuracy and reliability of your tool</li></ol>
