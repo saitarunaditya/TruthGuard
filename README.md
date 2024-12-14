@@ -1,5 +1,5 @@
 <h1>TruthGuard</h1>
-<p style={color:"red"}> * Completed tasks should be marked with a tick emoji. Those who are working on a task must explicitly mention their name beside the task</p>
+<p style="color:red;"> * Completed tasks should be marked with a tick emoji. Those who are working on a task must explicitly mention their name beside the task</p>
 
 <h2>Tasks</h2>
   
