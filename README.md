@@ -1,4 +1,4 @@
-# TruthGuard
+<h1>TruthGuard</h1>
 Fake News Detection AI
 
 <h2>Tasks</h2>
