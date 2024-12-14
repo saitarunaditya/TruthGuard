@@ -3,7 +3,7 @@
 
 <h2>Tasks</h2>
   
-<h3>Dataset preparation</h3>
+<h3>Dataset preparation ✅ - Sai Tharun</h3>
 
 <ol><li>Analyze the data provided by the Ministry of Information (MIB) and external fact-checking APIs</li>
 <li>Pre-process data, including cleaning, tokenization, and entity extraction for text-based media content</li></ol>
