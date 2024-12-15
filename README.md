@@ -38,3 +38,35 @@
 
 <ol><li>Perform real-time testing with live or recorded broadcasts.</li>
 <li>Use ground-truth data from fact-checking organizations to evaluate the accuracy and reliability of your tool</li></ol>
+<hr>
+<h2>Tech Stack</h2>
+<table>
+  <tr>
+    <td><b>Programming Languages</b></td>
+    <td>Python, JavaScript, and R</td>
+  </tr>
+  <tr>
+    <td><b>AI/ML Frameworks</b></td>
+    <td>TensorFlow, PyTorch, Scikit-learn, Keras</td>
+  </tr>
+  <tr>
+    <td><b>NLP tools</b></td>
+    <td>SpaCy, NLTK, Hugging Face Transformers, BERT, GPT-based models</td>
+  </tr>
+  <tr>
+    <td><b>Databases</b></td>
+    <td>MongoDB, PostgreSQL, MySQL for storing labeled data and metadata</td>
+  </tr>
+  <tr>
+    <td><b>Cloud platforms</b></td>
+    <td>AWS, Google Cloud, and Microsoft Azure for scalability and real-time processing</td>
+  </tr>
+  <tr>
+    <td><b>Streaming and data processing tools</b></td>
+    <td>Apache Kafka, Spark Streaming</td>
+  </tr>
+  <tr>
+    <td><b>Visualization Libraries</b></td>
+    <td>Plotly, D3.js, Dash for creating real-time data dashboards</td>
+  </tr>
+</table>
