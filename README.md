@@ -115,6 +115,10 @@ The application should now be running at [http://localhost:3000](http://localhos
 - Application logs are stored in `combined.log`.
 - Error logs are stored in `error.log`.
 
+## Output
+![image](https://github.com/user-attachments/assets/2c3da6b2-cd36-4112-b198-98f134308ee0)
+
+
 ## Contributing
 Feel free to raise issues or contribute by submitting pull requests to enhance this application.
 
