@@ -97,39 +97,108 @@ const UI = {
     },
 
     updateFactCheck(analysis) {
+        if (!analysis) return;
+
+        const confidenceBgColor = 
+            analysis.confidence > 70 ? 'bg-green-50' :
+            analysis.confidence > 50 ? 'bg-yellow-50' : 'bg-red-50';
+        
+        const confidenceTextColor =
+            analysis.confidence > 70 ? 'text-green-600' :
+            analysis.confidence > 50 ? 'text-yellow-600' : 'text-red-600';
+
         elements.factCheckResult.innerHTML = `
-            <div class="space-y-3 sm:space-y-4">
-                <div class="p-3 sm:p-4 rounded-lg ${
-                    analysis.confidence > 70 ? 'bg-green-50' : 
-                    analysis.confidence > 50 ? 'bg-yellow-50' : 'bg-red-50'
-                }">
-                    <h3 class="font-bold text-base sm:text-lg mb-2">Credibility Analysis</h3>
-                    <p class="text-sm sm:text-base"><strong>Verdict:</strong> ${analysis.verdict}</p>
-                    <p class="text-sm sm:text-base"><strong>Confidence Score:</strong> ${analysis.confidence}%</p>
+            <div class="space-y-4">
+                <div class="p-4 rounded-lg ${confidenceBgColor}">
+                    <h3 class="font-bold text-lg mb-2">Content Analysis</h3>
+                    <div class="flex flex-col gap-2">
+                        <div class="flex justify-between items-center">
+                            <span class="font-medium">Credibility Score:</span>
+                            <span class="${confidenceTextColor} font-bold">${analysis.confidence}%</span>
+                        </div>
+                        <div class="text-sm font-medium">
+                            Verdict: ${analysis.verdict}
+                        </div>
+                    </div>
                 </div>
                 
                 ${analysis.detected_patterns.length > 0 ? `
-                    <div class="mt-3 sm:mt-4">
-                        <h4 class="font-semibold text-sm sm:text-base">Detected Patterns:</h4>
-                        <ul class="list-disc pl-4 sm:pl-5 mt-2 space-y-1">
+                    <div class="mt-4">
+                        <h4 class="font-semibold mb-2">Detected Patterns:</h4>
+                        <div class="space-y-2">
                             ${analysis.detected_patterns.map(pattern => `
-                                <li class="text-sm sm:text-base">
-                                    <span class="font-medium">${pattern.word || pattern.phrase}</span>
-                                    <span class="text-gray-600">
-                                        (${pattern.category.toLowerCase()})
-                                    </span>
-                                    <span class="${pattern.impact > 0 ? 'text-green-600' : 'text-red-600'}">
+                                <div class="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                    <span class="font-medium">${pattern.pattern}</span>
+                                    <span class="font-mono ${pattern.impact > 0 ? 'text-green-600' : 'text-red-600'}">
                                         ${pattern.impact > 0 ? '+' : ''}${pattern.impact}
                                     </span>
-                                </li>
+                                </div>
                             `).join('')}
-                        </ul>
+                        </div>
                     </div>
                 ` : ''}
             </div>
         `;
 
         this.createConfidenceChart(analysis.confidence);
+    },
+
+    createConfidenceChart(confidence) {
+        if (!elements.confidenceChart) return;
+
+        const data = [{
+            type: 'indicator',
+            mode: 'gauge+number',
+            value: confidence,
+            title: { text: 'Credibility Score' },
+            gauge: {
+                axis: { range: [0, 100] },
+                bar: { color: `hsl(${confidence * 1.2}, 70%, 50%)` },
+                bgcolor: 'white',
+                borderwidth: 2,
+                bordercolor: '#ddd',
+                steps: [
+                    { range: [0, 50], color: '#fee2e2' },
+                    { range: [50, 70], color: '#fef3c7' },
+                    { range: [70, 100], color: '#dcfce7' }
+                ],
+                threshold: {
+                    line: { color: 'black', width: 4 },
+                    thickness: 0.75,
+                    value: confidence
+                }
+            }
+        }];
+
+        const layout = {
+            width: elements.confidenceChart.offsetWidth,
+            height: 250,
+            margin: { t: 25, r: 25, l: 25, b: 25 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            font: { size: 12 }
+        };
+
+        const config = {
+            responsive: true,
+            displayModeBar: false
+        };
+
+        if (state.currentChartInstance) {
+            Plotly.purge(elements.confidenceChart);
+        }
+
+        Plotly.newPlot(elements.confidenceChart, data, layout, config)
+            .then(() => {
+                state.currentChartInstance = elements.confidenceChart;
+            });
+
+        window.addEventListener('resize', () => {
+            if (state.currentChartInstance) {
+                Plotly.relayout(elements.confidenceChart, {
+                    width: elements.confidenceChart.offsetWidth
+                });
+            }
+        });
     },
 
     createConfidenceChart(confidence) {
@@ -185,7 +254,6 @@ const UI = {
         Plotly.newPlot(elements.confidenceChart, data, createResponsiveLayout(), config).then(() => {
             state.currentChartInstance = elements.confidenceChart;
             
-            // Add rotation animation
             Plotly.animate(elements.confidenceChart, 
                 { data: [{ rotation: 90 }] },
                 {
@@ -195,13 +263,12 @@ const UI = {
             );
         });
 
-        // Handle window resize
-        const handleResize = () => {
-            Plotly.relayout(elements.confidenceChart, createResponsiveLayout());
-        };
-
         window.removeEventListener('resize', handleResize);
         window.addEventListener('resize', handleResize);
+        
+        function handleResize() {
+            Plotly.relayout(elements.confidenceChart, createResponsiveLayout());
+        }
     },
 
     updateTrendingNews(news) {
@@ -446,8 +513,10 @@ const TranscriptionManager = {
     }
 };
 
-// Event Listeners
-const setupEventListeners = () => {
+// Initialize the application
+const initializeApp = async () => {
+    WebSocketManager.setup();
+    
     // Form submission
     elements.form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -468,127 +537,44 @@ const setupEventListeners = () => {
             case 'recorded':
                 await TranscriptionManager.handleRecorded(input, language);
                 break;
-            case 'live':
-                TranscriptionManager.startLive(input, language);
-                break;
-            case 'text':
-                await TranscriptionManager.handleTextAnalysis(input, language);
-                break;
-        }
-    });
-
-    // Stop button
-    elements.stopButton.addEventListener('click', () => {
-        TranscriptionManager.stopLive();
-    });
-
-    // Video type change
-    elements.videoType.addEventListener('change', () => {
-        const isText = elements.videoType.value === 'text';
-        elements.videoUrl.parentElement.style.display = isText ? 'none' : 'block';
-        elements.textInput.parentElement.style.display = isText ? 'block' : 'none';
-        
-        if (state.isLiveTranscribing) {
+                case 'live':
+                    TranscriptionManager.startLive(input, language);
+                    break;
+                case 'text':
+                    await TranscriptionManager.handleTextAnalysis(input, language);
+                    break;
+            }
+        });
+    
+        // Stop button
+        elements.stopButton.addEventListener('click', () => {
             TranscriptionManager.stopLive();
+        });
+    
+        // Video type change handler
+        elements.videoType.addEventListener('change', (e) => {
+            const isText = e.target.value === 'text';
+            elements.videoUrl.parentElement.classList.toggle('hidden', isText);
+            elements.textInput.parentElement.classList.toggle('hidden', !isText);
+            elements.startButton.textContent = isText ? 'Analyze Text' : 'Start Transcription';
+        });
+    
+        // Initialize news features
+        try {
+            const [news, sources] = await Promise.all([
+                API.fetchTrendingNews(),
+                API.getNewsSources()
+            ]);
+            
+            UI.updateTrendingNews(news);
+            UI.updateNewsSources(sources);
+            API.setupNewsStream();
+        } catch (error) {
+            console.error('Error initializing news features:', error);
+            UI.showError('Failed to load news content');
         }
-    });
+    };
 
-    // Refresh news button
-    const refreshButton = document.getElementById('refreshNews');
-    if (refreshButton) {
-        refreshButton.addEventListener('click', async () => {
-            try {
-                UI.showStatus('Refreshing news...');
-                const news = await API.fetchTrendingNews();
-                UI.updateTrendingNews(news);
-                UI.showStatus('News updated successfully');
-            } catch (error) {
-                UI.showError('Failed to refresh news');
-            }
-        });
-    }
-
-    // Handle window resize for responsive layouts
-    let resizeTimeout;
-    window.addEventListener('resize', () => {
-        clearTimeout(resizeTimeout);
-        resizeTimeout = setTimeout(() => {
-            if (state.currentChartInstance) {
-                const confidence = parseFloat(state.currentChartInstance.data[0].values[0]);
-                UI.createConfidenceChart(confidence);
-            }
-        }, 250);
-    });
-
-    // Add touch event handlers for mobile
-    if ('ontouchstart' in window) {
-        const addTouchFeedback = (element) => {
-            element.addEventListener('touchstart', () => {
-                element.classList.add('active');
-            });
-            element.addEventListener('touchend', () => {
-                element.classList.remove('active');
-            });
-        };
-
-        const buttons = document.querySelectorAll('button');
-        buttons.forEach(addTouchFeedback);
-    }
-};
-
-// Add CSS animations
-const style = document.createElement('style');
-style.textContent = `
-    .animate-fade-in {
-        animation: fadeIn 0.3s ease-in;
-    }
     
-    .animate-fade-out {
-        animation: fadeOut 0.3s ease-out;
-    }
-    
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    
-    @keyframes fadeOut {
-        from { opacity: 1; transform: translateY(0); }
-        to { opacity: 0; transform: translateY(10px); }
-    }
-    
-    button.active {
-        transform: scale(0.98);
-        transition: transform 0.1s ease-in-out;
-    }
-`;
-document.head.appendChild(style);
-
-// Initialize the application
-const initializeApp = async () => {
-    WebSocketManager.setup();
-    setupEventListeners();
-    
-    try {
-        // Initialize news sources and stream
-        const sources = await API.getNewsSources();
-        UI.updateNewsSources(sources);
-        const newsStream = API.setupNewsStream();
-
-        // Initial news fetch
-        const news = await API.fetchTrendingNews();
-        UI.updateTrendingNews(news);
-
-        // Add CSS variables for responsive design
-        document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
-        window.addEventListener('resize', () => {
-            document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
-        });
-    } catch (error) {
-        console.error('Initialization error:', error);
-        UI.showError('Failed to initialize application');
-    }
-};
-
-// Start the application when DOM is loaded
-document.addEventListener('DOMContentLoaded', initializeApp);
+    // Start the application
+    document.addEventListener('DOMContentLoaded', initializeApp);
