@@ -1,32 +1,26 @@
+
 {
-  "name": "video-transcription-app",
+  "name": "news-analyzer",
   "version": "1.0.0",
-  "description": "Video to Text Transcription Application",
+  "description": "News analysis and transcription service",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "assemblyai": "^4.8.0",
-    "axios": "^1.7.9",
-    "body-parser": "^1.20.3",
+    "express": "^4.17.1",
+    "ws": "^8.2.3",
+    "assemblyai": "^3.0.1",
+    "body-parser": "^1.19.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
+    "dotenv": "^10.0.0",
+    "axios": "^0.24.0",
     "feedparser-promised": "^2.0.1",
-    "ffmpeg": "^0.0.4",
-    "form-data": "^4.0.1",
-    "string-similarity": "^4.0.4",
-    "winston": "^3.17.0",
-    "ws": "^8.18.0",
-    "youtube-dl-exec": "^2.5.8",
-    "youtube-stream": "^0.0.2",
-    "ytdl-core": "^4.11.5"
+    "winston": "^3.3.3",
+    "string-similarity": "^4.0.4"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^2.0.15"
   }
 }
