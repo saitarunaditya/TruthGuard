@@ -5,22 +5,24 @@ const WebSocket = require('ws');
 const { AssemblyAI } = require('assemblyai');
 const { spawn } = require('child_process');
 const stream = require('stream');
-const { Buffer } = require('buffer');
 const path = require('path');
 const cors = require('cors');
 const axios = require('axios');
 const feedparser = require('feedparser-promised');
 const winston = require('winston');
 const stringSimilarity = require('string-similarity');
+
+// Constants and Configurations
+const PORT = process.env.PORT || 3000;
 const NEWS_UPDATE_INTERVAL = 300000; // 5 minutes
+const CACHE_CLEANUP_INTERVAL = 3600000; // 1 hour
 
 // Initialize Express and WebSocket server
 const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
-const PORT = process.env.PORT || 3000;
 
-// Configure logging
+// Configure logging with Winston
 const logger = winston.createLogger({
     level: 'info',
     format: winston.format.combine(
@@ -34,7 +36,7 @@ const logger = winston.createLogger({
     ]
 });
 
-// Constants and Configurations
+// Credibility Rules Configuration
 const CREDIBILITY_RULES = {
     SUSPICIOUS_KEYWORDS: {
         SENSATIONALISM: [
@@ -64,6 +66,8 @@ const CREDIBILITY_RULES = {
         { phrase: 'official statement', weight: 5 }
     ]
 };
+
+// News Sources Configuration
 const NEWS_SOURCES = {
     RSS_FEEDS: [
         {
@@ -88,54 +92,101 @@ const NEWS_SOURCES = {
     }
 };
 
-// Cache Management
-const cache = {
-    audio: new Map(),
-    liveStreams: new Map(),
-    news: new Map(),
-    analysisResults: new Map(),
-    
-    clearOldEntries(maxAge = 3600000) {
-        const now = Date.now();
-        [this.audio, this.news, this.analysisResults].forEach(cacheMap => {
-            for (const [key, value] of cacheMap.entries()) {
-                if (now - value.timestamp > maxAge) {
-                    cacheMap.delete(key);
+// Optimized Cache System
+class CacheManager {
+    constructor() {
+        this.caches = new Map();
+        this.initializeCaches();
+    }
+
+    initializeCaches() {
+        ['audio', 'news', 'analysis', 'liveStreams'].forEach(cacheType => {
+            this.caches.set(cacheType, new Map());
+        });
+    }
+
+    get(type, key) {
+        const cache = this.caches.get(type);
+        const item = cache.get(key);
+        if (item && !this.isExpired(item.timestamp)) {
+            return item.data;
+        }
+        return null;
+    }
+
+    set(type, key, data, ttl = 3600000) {
+        const cache = this.caches.get(type);
+        cache.set(key, {
+            data,
+            timestamp: Date.now(),
+            ttl
+        });
+    }
+
+    delete(type, key) {
+        const cache = this.caches.get(type);
+        cache.delete(key);
+    }
+
+    clear(type) {
+        if (type) {
+            this.caches.get(type).clear();
+        } else {
+            this.caches.forEach(cache => cache.clear());
+        }
+    }
+
+    isExpired(timestamp, ttl = 3600000) {
+        return (Date.now() - timestamp) > ttl;
+    }
+
+    cleanup() {
+        this.caches.forEach((cache, type) => {
+            for (const [key, value] of cache.entries()) {
+                if (this.isExpired(value.timestamp, value.ttl)) {
+                    this.delete(type, key);
                 }
             }
         });
     }
-};
+}
 
-// Middleware
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// Initialize Cache
+const cacheManager = new CacheManager();
 
-// Initialize AssemblyAI
-const assemblyAI = new AssemblyAI({
-    apiKey: process.env.ASSEMBLYAI_API_KEY
-});
-
-// Utility Classes
-class SlidingBuffer {
-    constructor(maxDuration = 10) {
+// Optimized Buffer Management
+class OptimizedSlidingBuffer {
+    constructor(maxDuration = 60000, chunkSize = 10000) {
         this.maxDuration = maxDuration;
+        this.chunkSize = chunkSize;
         this.chunks = [];
         this.totalDuration = 0;
+        this.lastProcessedTimestamp = 0;
     }
 
     addChunk(chunk, duration) {
-        this.chunks.push({ chunk, duration });
+        const now = Date.now();
+        this.chunks.push({ 
+            chunk, 
+            duration,
+            timestamp: now 
+        });
         this.totalDuration += duration;
 
         while (this.totalDuration > this.maxDuration) {
             const removed = this.chunks.shift();
             this.totalDuration -= removed.duration;
         }
+
+        return this.shouldProcess(now);
+    }
+
+    shouldProcess(now) {
+        return (now - this.lastProcessedTimestamp) >= this.chunkSize;
     }
 
     getBuffer() {
+        this.lastProcessedTimestamp = Date.now();
         return Buffer.concat(this.chunks.map(c => c.chunk));
     }
 
@@ -145,15 +196,322 @@ class SlidingBuffer {
     }
 }
 
-// Utility Functions
-const bufferToStream = (buffer) => {
-    const readable = new stream.Readable();
-    readable._read = () => {};
-    readable.push(buffer);
-    readable.push(null);
-    return readable;
+// Optimized Credibility Analyzer
+class CredibilityAnalyzer {
+    constructor() {
+        this.patterns = new Map();
+        this.compilePatterns();
+    }
+
+    compilePatterns() {
+        Object.entries(CREDIBILITY_RULES.SUSPICIOUS_KEYWORDS).forEach(([category, keywords]) => {
+            keywords.forEach(({ word, weight }) => {
+                this.patterns.set(word, {
+                    regex: new RegExp(word, 'gi'),
+                    weight,
+                    category
+                });
+            });
+        });
+
+        CREDIBILITY_RULES.CREDIBLE_INDICATORS.forEach(({ phrase, weight }) => {
+            this.patterns.set(phrase, {
+                regex: new RegExp(phrase, 'gi'),
+                weight,
+                category: 'CREDIBLE'
+            });
+        });
+    }
+
+    analyze(text, metadata = {}) {
+        const cacheKey = text.substring(0, 100);
+        const cached = cacheManager.get('analysis', cacheKey);
+        if (cached) return cached;
+
+        let score = 100;
+        const detected_patterns = [];
+        const analysis_details = {
+            sensationalism: 0,
+            clickbait: 0,
+            conspiracy: 0,
+            credible_indicators: 0
+        };
+
+        for (const [pattern, { regex, weight, category }] of this.patterns) {
+            const matches = (text.match(regex) || []).length;
+            if (matches > 0) {
+                score += weight * matches;
+                analysis_details[category.toLowerCase()] += matches;
+                detected_patterns.push({
+                    pattern,
+                    category,
+                    matches,
+                    impact: weight * matches
+                });
+            }
+        }
+
+        score = Math.max(10, Math.min(score, 100));
+
+        const result = {
+            verdict: score > 70 ? 'Highly Credible' : score > 50 ? 'Somewhat Credible' : 'Low Credibility',
+            confidence: Math.round(score),
+            analysis_details,
+            detected_patterns,
+            metadata: {
+                ...metadata,
+                analysis_timestamp: new Date().toISOString()
+            }
+        };
+
+        cacheManager.set('analysis', cacheKey, result);
+        return result;
+    }
+}
+
+const SourceVerifier = {
+    // Reliability scores for different source types
+    RELIABILITY_SCORES: {
+        ACADEMIC: 0.9,
+        GOVERNMENT: 0.85,
+        NEWS_AGENCY: 0.75,
+        FACT_CHECK_ORG: 0.8,
+        SOCIAL_MEDIA: 0.3,
+        UNKNOWN: 0.4
+    },
+
+    // Domain patterns for source classification
+    DOMAIN_PATTERNS: {
+        ACADEMIC: [/\.edu$/, /\.ac\.[a-z]{2}$/],
+        GOVERNMENT: [/\.gov$/, /\.gov\.[a-z]{2}$/],
+        NEWS_AGENCY: [
+            'reuters.com',
+            'apnews.com',
+            'bloomberg.com',
+            'afp.com'
+        ],
+        FACT_CHECK_ORG: [
+            'snopes.com',
+            'factcheck.org',
+            'politifact.com'
+        ]
+    },
+
+    async verifySource(url) {
+        try {
+            const domain = new URL(url).hostname;
+            const sourceType = this.classifySource(domain);
+            const baseScore = this.RELIABILITY_SCORES[sourceType];
+
+            // Additional verification checks
+            const [sslValid, hasHTTPS] = await Promise.all([
+                this.verifySSL(url),
+                url.startsWith('https')
+            ]);
+
+            // Cross-reference with fact-checking databases
+            const factCheckData = await this.crossReferenceFactCheckers(url);
+
+            return {
+                score: this.calculateFinalScore(baseScore, {
+                    sslValid,
+                    hasHTTPS,
+                    factCheckData
+                }),
+                sourceType,
+                verificationDetails: {
+                    domain,
+                    sslValid,
+                    hasHTTPS,
+                    factCheckData
+                }
+            };
+        } catch (error) {
+            console.error('Source verification error:', error);
+            return {
+                score: this.RELIABILITY_SCORES.UNKNOWN,
+                sourceType: 'UNKNOWN',
+                error: error.message
+            };
+        }
+    },
+
+    classifySource(domain) {
+        for (const [type, patterns] of Object.entries(this.DOMAIN_PATTERNS)) {
+            if (patterns.some(pattern => 
+                pattern instanceof RegExp ? 
+                pattern.test(domain) : 
+                domain.includes(pattern)
+            )) {
+                return type;
+            }
+        }
+        return 'UNKNOWN';
+    },
+
+    async verifySSL(url) {
+        try {
+            const response = await fetch(url, {
+                method: 'HEAD',
+                mode: 'no-cors'
+            });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    },
+
+    async crossReferenceFactCheckers(url) {
+        const factCheckAPIs = [
+            `https://factchecktools.googleapis.com/v1alpha1/claims:search?key=${process.env.GOOGLE_FACT_CHECK_API_KEY}&query=${encodeURIComponent(url)}`,
+            // Add other fact-checking APIs as needed
+        ];
+
+        const results = await Promise.allSettled(
+            factCheckAPIs.map(api => fetch(api).then(res => res.json()))
+        );
+
+        return results
+            .filter(result => result.status === 'fulfilled')
+            .map(result => result.value)
+            .flat();
+    },
+
+    calculateFinalScore(baseScore, factors) {
+        let score = baseScore;
+        
+        if (!factors.sslValid) score *= 0.9;
+        if (!factors.hasHTTPS) score *= 0.9;
+        
+        if (factors.factCheckData?.length > 0) {
+            const factCheckImpact = factors.factCheckData.reduce((acc, check) => {
+                return acc + (check.rating === 'true' ? 0.1 : -0.1);
+            }, 0);
+            score = Math.max(0.1, Math.min(1, score + factCheckImpact));
+        }
+
+        return Math.round(score * 100);
+    }
 };
 
+// Integration with existing CredibilityAnalyzer
+class EnhancedCredibilityAnalyzer extends CredibilityAnalyzer {
+    async analyze(text, metadata = {}) {
+        const baseAnalysis = super.analyze(text, metadata);
+        
+        if (metadata.url) {
+            const sourceVerification = await SourceVerifier.verifySource(metadata.url);
+            const combinedScore = Math.round(
+                (baseAnalysis.confidence + sourceVerification.score) / 2
+            );
+
+            return {
+                ...baseAnalysis,
+                confidence: combinedScore,
+                source_verification: sourceVerification,
+                verdict: this.getEnhancedVerdict(combinedScore, sourceVerification)
+            };
+        }
+
+        return baseAnalysis;
+    }
+
+    getEnhancedVerdict(score, sourceVerification) {
+        if (score > 80 && sourceVerification.sourceType !== 'UNKNOWN') {
+            return 'Highly Reliable';
+        } else if (score > 60) {
+            return 'Moderately Reliable';
+        } else {
+            return 'Low Reliability';
+        }
+    }
+}
+// Initialize AssemblyAI
+const assemblyAI = new AssemblyAI({
+    apiKey: process.env.ASSEMBLYAI_API_KEY
+});
+
+// Optimized Stream Processor
+class StreamProcessor {
+    constructor(assemblyAI, ws) {
+        this.assemblyAI = assemblyAI;
+        this.ws = ws;
+        this.buffer = new OptimizedSlidingBuffer();
+        this.analyzer = new CredibilityAnalyzer();
+        this.transcriptionQueue = [];
+        this.isProcessing = false;
+    }
+
+    async processChunk(chunk, duration) {
+        if (!this.buffer.addChunk(chunk, duration)) {
+            return;
+        }
+
+        this.transcriptionQueue.push({
+            buffer: this.buffer.getBuffer(),
+            timestamp: Date.now()
+        });
+
+        if (!this.isProcessing) {
+            this.processQueue();
+        }
+    }
+
+    async processQueue() {
+        if (this.isProcessing || this.transcriptionQueue.length === 0) {
+            return;
+        }
+
+        this.isProcessing = true;
+        const { buffer, timestamp } = this.transcriptionQueue.shift();
+
+        try {
+            const audioStream = new stream.PassThrough();
+            audioStream.end(buffer);
+
+            const [audioFile] = await Promise.all([
+                this.assemblyAI.files.upload(audioStream, {
+                    fileName: `chunk-${timestamp}.mp3`,
+                    contentType: 'audio/mp3'
+                })
+            ]);
+
+            const transcript = await this.assemblyAI.transcripts.transcribe({
+                audio: audioFile,
+                language_code: 'en',
+                word_boost: Array.from(this.analyzer.patterns.keys()),
+                boost_param: "high"
+            });
+
+            const analysis = this.analyzer.analyze(transcript.text, {
+                type: 'live_stream',
+                timestamp
+            });
+
+            this.ws.send(JSON.stringify({
+                type: 'transcription',
+                text: transcript.text,
+                analysis,
+                timestamp
+            }));
+
+        } catch (error) {
+            logger.error('Stream processing error:', error);
+            this.ws.send(JSON.stringify({
+                type: 'error',
+                error: 'Stream processing failed',
+                details: error.message
+            }));
+        } finally {
+            this.isProcessing = false;
+            if (this.transcriptionQueue.length > 0) {
+                this.processQueue();
+            }
+        }
+    }
+}
+
+// Utility Functions
 const detectPlatform = (url) => {
     try {
         const urlObj = new URL(url);
@@ -180,276 +538,68 @@ const detectPlatform = (url) => {
     }
 };
 
-// Core Analysis Functions
-const analyzeNewsCredibility = (text, metadata = {}) => {
-    let score = 100;
-    const detected_patterns = [];
-    const analysis_details = {
-        sensationalism: 0,
-        clickbait: 0,
-        conspiracy: 0,
-        credible_indicators: 0
-    };
-
-    // Analyze text for suspicious patterns
-    Object.entries(CREDIBILITY_RULES.SUSPICIOUS_KEYWORDS).forEach(([category, keywords]) => {
-        keywords.forEach(({ word, weight }) => {
-            const regex = new RegExp(word, 'gi');
-            const matches = (text.match(regex) || []).length;
-            
-            if (matches > 0) {
-                score += weight * matches;
-                analysis_details[category.toLowerCase()] += matches;
-                detected_patterns.push({
-                    word,
-                    category,
-                    count: matches,
-                    impact: weight * matches
-                });
-            }
-        });
-    });
-
-    // Check for credible indicators
-    CREDIBILITY_RULES.CREDIBLE_INDICATORS.forEach(({ phrase, weight }) => {
-        const regex = new RegExp(phrase, 'gi');
-        const matches = (text.match(regex) || []).length;
-        
-        if (matches > 0) {
-            score += weight * matches;
-            analysis_details.credible_indicators += matches;
-            detected_patterns.push({
-                phrase,
-                category: 'CREDIBLE',
-                count: matches,
-                impact: weight * matches
-            });
-        }
-    });
-
-    // Text length analysis
-    const text_length = text.split(/\s+/).length;
-    if (text_length < 50) {
-        score -= 15;
-        detected_patterns.push({
-            category: 'LENGTH',
-            detail: 'Very short content',
-            impact: -15
-        });
-    }
-
-    // Source reliability adjustment
-    if (metadata.source) {
-        const sourceReliability = NEWS_SOURCES.RSS_FEEDS.find(
-            s => metadata.source.toLowerCase().includes(s.url.toLowerCase())
-        )?.reliability || 0.7;
-        score *= sourceReliability;
-    }
-
-    // Normalize score
-    score = Math.max(10, Math.min(score, 100));
-
-    const result = {
-        verdict: score > 70 ? 'Highly Credible' : score > 50 ? 'Somewhat Credible' : 'Low Credibility',
-        confidence: Math.round(score),
-        analysis_details,
-        detected_patterns,
-        metadata: {
-            ...metadata,
-            text_length,
-            analysis_timestamp: new Date().toISOString()
-        }
-    };
-
-    // Cache analysis result
-    cache.analysisResults.set(text.substring(0, 100), {
-        result,
-        timestamp: Date.now()
-    });
-
-    return result;
-};
-
-// Video Processing Functions
-const downloadVideo = async (url, isLive = false) => {
-    try {
-        const platform = detectPlatform(url);
-        logger.info(`Detected platform: ${platform}`);
-
-        const config = [
-            '-x',
-            '--audio-format', 'mp3',
-            '--output', '-',
-            '--no-playlist'
-        ];
-
-        if (isLive) {
-            config.push('--live-from-start');
-        }
-
-        return new Promise((resolve, reject) => {
-            const audioChunks = [];
-            let isAudioData = false;
-
-            const ytDlpProcess = spawn('yt-dlp', [...config, url]);
-
-            ytDlpProcess.stdout.on('data', (chunk) => {
-                isAudioData = true;
-                audioChunks.push(chunk);
-            });
-
-            ytDlpProcess.stderr.on('data', (data) => {
-                logger.info(`Download progress: ${data}`);
-            });
-
-            ytDlpProcess.on('close', (code) => {
-                if (code === 0 && isAudioData) {
-                    resolve({ 
-                        audioBuffer: Buffer.concat(audioChunks),
-                        platform 
-                    });
-                } else {
-                    reject(new Error(`Download failed with code ${code}`));
-                }
-            });
-
-            ytDlpProcess.on('error', reject);
-        });
-    } catch (error) {
-        throw new Error(`Failed to process ${url}: ${error.message}`);
-    }
-};
-
-const processLiveStream = async (url, ws, language) => {
-    const platform = detectPlatform(url);
-    const slidingBuffer = new SlidingBuffer();
-    let currentStream = null;
-
-    try {
-        const config = [
-            '-x',
-            '--audio-format', 'mp3',
-            '--output', '-',
-            '--no-playlist',
-            '--live-from-start'
-        ];
-
-        currentStream = spawn('yt-dlp', [...config, url]);
-
-        currentStream.stdout.on('data', async (chunk) => {
-            try {
-                slidingBuffer.addChunk(chunk, 1);
-
-                if (slidingBuffer.totalDuration >= 10) {
-                    const audioBuffer = slidingBuffer.getBuffer();
-                    const audioFile = await assemblyAI.files.upload(bufferToStream(audioBuffer), {
-                        fileName: 'live-stream.mp3',
-                        contentType: 'audio/mp3'
-                    });
-
-                    const transcript = await assemblyAI.transcripts.transcribe({
-                        audio: audioFile,
-                        language_code: language
-                    });
-
-                    const analysis = analyzeNewsCredibility(transcript.text, {
-                        type: 'live_stream',
-                        platform,
-                        timestamp: Date.now()
-                    });
-
-                    ws.send(JSON.stringify({
-                        type: 'transcription',
-                        text: transcript.text,
-                        platform,
-                        analysis,
-                        timestamp: Date.now()
-                    }));
-
-                    slidingBuffer.clear();
-                }
-            } catch (error) {
-                logger.error('Live stream processing error:', error);
-                ws.send(JSON.stringify({
-                    type: 'error',
-                    error: 'Stream processing failed',
-                    details: error.message
-                }));
-            }
-        });
-
-        currentStream.stderr.on('data', (data) => {
-            logger.info(`${platform} stream progress: ${data}`);
-        });
-
-        return currentStream;
-    } catch (error) {
-        logger.error('Stream setup error:', error);
-        throw error;
-    }
-};
+// News Fetching Functions
 const fetchGNewsArticles = async () => {
     try {
+        if (!process.env.GNEWS_API_KEY) {
+            logger.error('GNews API key is not configured');
+            return [];
+        }
+
         const response = await axios.get(NEWS_SOURCES.GNEWS.endpoint, {
             params: NEWS_SOURCES.GNEWS.params
         });
 
-        return response.data.articles.map(article => ({
-            title: article.title,
-            description: article.description,
-            url: article.url,
-            source: article.source.name,
-            published: article.publishedAt
-        }));
+        if (response.data?.articles) {
+            return response.data.articles.map(article => ({
+                title: article.title,
+                description: article.description,
+                url: article.url,
+                source: article.source.name,
+                published: article.publishedAt
+            }));
+        }
+        return [];
     } catch (error) {
-        logger.error('GNews API Error:', error);
+        logger.error(`GNews API Error: ${error.message}`);
         return [];
     }
 };
 
-
-
-// Update fetchTrendingNews function
 const fetchTrendingNews = async () => {
+    const cachedNews = cacheManager.get('news', 'trending');
+    if (cachedNews) return cachedNews;
+
     try {
-        const cachedNews = cache.news.get('trending');
-        if (cachedNews && (Date.now() - cachedNews.timestamp < NEWS_UPDATE_INTERVAL)) {
-            return cachedNews.data;
-        }
-
-        // Fetch RSS feeds
-        const rssPromises = NEWS_SOURCES.RSS_FEEDS.map(async (source) => {
-            try {
-                const items = await feedparser.parse(source.url);
-                return items.slice(0, 10).map(item => ({
-                    title: item.title,
-                    description: item.description || item.summary,
-                    url: item.link,
-                    source: source.name,
-                    reliability: source.reliability,
-                    published: item.pubDate
-                }));
-            } catch (error) {
-                logger.error(`RSS feed error for ${source.name}:`, error);
-                return [];
-            }
-        });
-
-        // Combine RSS and GNews results
         const [rssResults, gnewsResults] = await Promise.all([
-            Promise.all(rssPromises).then(results => results.flat()),
+            Promise.all(NEWS_SOURCES.RSS_FEEDS.map(async (source) => {
+                try {
+                    const items = await feedparser.parse(source.url);
+                    return items.slice(0, 10).map(item => ({
+                        title: item.title,
+                        description: item.description || item.summary,
+                        url: item.link,
+                        source: source.name,
+                        reliability: source.reliability,
+                        published: item.pubDate
+                    }));
+                } catch (error) {
+                    logger.error(`RSS feed error for ${source.name}:`, error);
+                    return [];
+                }
+            })).then(results => results.flat()),
             fetchGNewsArticles()
         ]);
 
+        const analyzer = new CredibilityAnalyzer();
         const allNews = [...rssResults, ...gnewsResults];
 
-        // Remove duplicates and analyze
         const uniqueNews = allNews.reduce((acc, current) => {
             const isDuplicate = acc.some(item => 
                 stringSimilarity.compareTwoStrings(item.title, current.title) > 0.8
             );
             if (!isDuplicate) {
-                const analysis = analyzeNewsCredibility(
+                const analysis = analyzer.analyze(
                     `${current.title} ${current.description || ''}`,
                     { source: current.source, published: current.published }
                 );
@@ -458,7 +608,6 @@ const fetchTrendingNews = async () => {
             return acc;
         }, []);
 
-        // Sort by credibility and recency
         const sortedNews = uniqueNews.sort((a, b) => {
             const timeWeight = 0.3;
             const credibilityWeight = 0.7;
@@ -467,18 +616,13 @@ const fetchTrendingNews = async () => {
             const timeB = new Date(b.published).getTime();
             
             const timeScore = (timeA - timeB) * timeWeight;
-            const credibilityScore = (a.analysis.confidence - b.analysis.confidence) * credibilityWeight;
+            const credScore = (a.analysis.confidence - b.analysis.confidence) * credibilityWeight;
             
-            return (credibilityScore + timeScore) * -1; // Descending order
+            return (credScore + timeScore) * -1;
         });
 
         const result = sortedNews.slice(0, 15);
-        
-        cache.news.set('trending', {
-            data: result,
-            timestamp: Date.now()
-        });
-
+        cacheManager.set('news', 'trending', result, NEWS_UPDATE_INTERVAL);
         return result;
     } catch (error) {
         logger.error('Error in fetchTrendingNews:', error);
@@ -486,19 +630,13 @@ const fetchTrendingNews = async () => {
     }
 };
 
-// Add new endpoint for news sources
-app.get('/api/news-sources', (req, res) => {
-    const sources = NEWS_SOURCES.RSS_FEEDS.map(source => ({
-        name: source.name,
-        url: source.url
-    }));
-    sources.push({ name: 'GNews', url: 'https://gnews.io/' });
-    
-    res.json(sources);
-});
-
+// Express Middleware
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // API Routes
+// API Routes (continued)
 app.post('/api/analyze-text', async (req, res) => {
     const { text, language = 'en' } = req.body;
 
@@ -507,7 +645,8 @@ app.post('/api/analyze-text', async (req, res) => {
     }
 
     try {
-        const analysis = analyzeNewsCredibility(text, {
+        const analyzer = new CredibilityAnalyzer();
+        const analysis = analyzer.analyze(text, {
             type: 'manual_input',
             language
         });
@@ -528,21 +667,56 @@ app.post('/api/analyze-text', async (req, res) => {
 
 app.post('/api/transcribe-recorded', async (req, res) => {
     const { video_url, language = 'en' } = req.body;
+    let ytDlpProcess = null;
 
     if (!video_url) {
         return res.status(400).json({ error: 'Video URL is required' });
     }
 
     try {
-        const { audioBuffer, platform } = await downloadVideo(video_url, false);
-        const cacheKey = `${platform}-${Date.now()}`;
-        cache.audio.set(cacheKey, {
-            buffer: audioBuffer,
-            timestamp: Date.now()
+        const platform = detectPlatform(video_url);
+        logger.info(`Starting transcription for ${platform} video: ${video_url}`);
+        
+        ytDlpProcess = spawn('yt-dlp', [
+            '-x',
+            '--audio-format', 'mp3',
+            '--output', '-',
+            '--no-playlist',
+            video_url
+        ]);
+
+        const audioChunks = [];
+        
+        ytDlpProcess.stdout.on('data', chunk => {
+            audioChunks.push(chunk);
         });
 
-        const audioFile = await assemblyAI.files.upload(bufferToStream(audioBuffer), {
-            fileName: 'audio.mp3',
+        ytDlpProcess.stderr.on('data', data => {
+            logger.info(`Download progress: ${data}`);
+        });
+
+        const processVideo = new Promise((resolve, reject) => {
+            ytDlpProcess.on('close', code => {
+                if (code === 0 && audioChunks.length > 0) {
+                    resolve(Buffer.concat(audioChunks));
+                } else {
+                    reject(new Error(`Download failed with code ${code}`));
+                }
+            });
+            ytDlpProcess.on('error', reject);
+        });
+
+        const audioBuffer = await processVideo;
+        
+        if (!audioBuffer || audioBuffer.length === 0) {
+            throw new Error('No audio data received from video');
+        }
+
+        const audioStream = new stream.PassThrough();
+        audioStream.end(audioBuffer);
+
+        const audioFile = await assemblyAI.files.upload(audioStream, {
+            fileName: `${platform}-${Date.now()}.mp3`,
             contentType: 'audio/mp3'
         });
 
@@ -551,13 +725,12 @@ app.post('/api/transcribe-recorded', async (req, res) => {
             language_code: language
         });
 
-        const analysis = analyzeNewsCredibility(transcript.text, {
+        const analyzer = new CredibilityAnalyzer();
+        const analysis = analyzer.analyze(transcript.text, {
             type: 'recorded_video',
             platform,
             url: video_url
         });
-
-        cache.audio.delete(cacheKey);
 
         res.json({
             text: transcript.text,
@@ -572,12 +745,17 @@ app.post('/api/transcribe-recorded', async (req, res) => {
             details: error.message,
             platform: detectPlatform(video_url)
         });
+    } finally {
+        if (ytDlpProcess && !ytDlpProcess.killed) {
+            try {
+                ytDlpProcess.kill();
+            } catch (err) {
+                logger.error('Error killing yt-dlp process:', err);
+            }
+        }
     }
 });
 
-
-
-// Add SSE endpoint for real-time news updates
 app.get('/api/news-stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -593,13 +771,12 @@ app.get('/api/news-stream', (req, res) => {
     };
 
     const newsInterval = setInterval(sendNews, NEWS_UPDATE_INTERVAL);
-    sendNews(); // Initial news send
+    sendNews();
 
     req.on('close', () => {
         clearInterval(newsInterval);
     });
 });
-
 
 app.get('/api/trending-news', async (req, res) => {
     try {
@@ -614,8 +791,18 @@ app.get('/api/trending-news', async (req, res) => {
     }
 });
 
+app.get('/api/news-sources', (req, res) => {
+    const sources = NEWS_SOURCES.RSS_FEEDS.map(source => ({
+        name: source.name,
+        url: source.url
+    }));
+    sources.push({ name: 'GNews', url: 'https://gnews.io/' });
+    
+    res.json(sources);
+});
+
 app.post('/api/clear-cache', (req, res) => {
-    cache.clearOldEntries();
+    cacheManager.cleanup();
     res.json({ message: 'Cache cleared successfully' });
 });
 
@@ -624,14 +811,14 @@ app.get('/health', (req, res) => {
         status: 'ok',
         timestamp: new Date().toISOString(),
         cache_stats: {
-            audio: cache.audio.size,
-            news: cache.news.size,
-            analysis: cache.analysisResults.size
+            audio: cacheManager.caches.get('audio').size,
+            news: cacheManager.caches.get('news').size,
+            analysis: cacheManager.caches.get('analysis').size
         }
     });
 });
 
-// WebSocket Handler
+// WebSocket Handler for Live Streaming
 wss.on('connection', (ws) => {
     logger.info('New WebSocket connection established');
     let currentStream = null;
@@ -648,9 +835,27 @@ wss.on('connection', (ws) => {
                     currentStream.kill();
                 }
 
-                currentStream = await processLiveStream(data.url, ws, data.language);
-                const streamKey = `${platform}-live-${Date.now()}`;
-                cache.liveStreams.set(streamKey, currentStream);
+                const ytDlpProcess = spawn('yt-dlp', [
+                    '-x',
+                    '--audio-format', 'mp3',
+                    '--output', '-',
+                    '--no-playlist',
+                    '--live-from-start',
+                    data.url
+                ]);
+
+                const streamProcessor = new StreamProcessor(assemblyAI, ws);
+
+                ytDlpProcess.stdout.on('data', chunk => {
+                    streamProcessor.processChunk(chunk, 1);
+                });
+
+                ytDlpProcess.stderr.on('data', data => {
+                    logger.info(`Stream progress: ${data}`);
+                });
+
+                currentStream = ytDlpProcess;
+                cacheManager.set('liveStreams', `${platform}-${Date.now()}`, currentStream);
 
                 ws.send(JSON.stringify({
                     type: 'status',
@@ -675,7 +880,6 @@ wss.on('connection', (ws) => {
         }
     });
 
-    // Send initial connection success message
     ws.send(JSON.stringify({
         type: 'status',
         message: 'Connected to transcription service'
@@ -693,30 +897,22 @@ app.use((err, req, res, next) => {
 
 // Periodic Cache Cleanup
 setInterval(() => {
-    cache.clearOldEntries();
-}, 3600000); // Clean every hour
+    cacheManager.cleanup();
+}, CACHE_CLEANUP_INTERVAL);
 
 // Graceful Shutdown
 const gracefulShutdown = () => {
     logger.info('Initiating graceful shutdown...');
     
-    // Close all live streams
-    cache.liveStreams.forEach(stream => stream.kill());
+    cacheManager.caches.get('liveStreams').forEach(stream => stream.kill());
+    cacheManager.clear();
     
-    // Clear all caches
-    cache.audio.clear();
-    cache.news.clear();
-    cache.analysisResults.clear();
-    cache.liveStreams.clear();
-    
-    // Close server
     server.close(() => {
         logger.info('Server shut down complete');
         process.exit(0);
     });
 };
 
-// Handle shutdown signals
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
