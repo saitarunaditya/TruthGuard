@@ -112,10 +112,9 @@ The application should now be running at [http://localhost:3000](http://localhos
 4. Monitor logs (`combined.log` and `error.log`) for debugging any issues.
 
    
-## Watch This Video 🎥
+## Demo Video
 
-[![Watch the video](https://img.youtube.com/vi/Ykl_I94HKnM/0.jpg)](https://youtu.be/Ykl_I94HKnM?si=3vMIXmJ7xZR_31l5)
-
+[Click to Watch on YouTube]([https://youtu.be/Ykl_I94HKnM?si=OuXYoHpLoIbfLwfO](https://youtu.be/Ykl_I94HKnM?si=OuXYoHpLoIbfLwfO))
 ## Logs
 - Application logs are stored in `combined.log`.
 - Error logs are stored in `error.log`.
