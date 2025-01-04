@@ -111,6 +111,11 @@ The application should now be running at [http://localhost:3000](http://localhos
 3. A stable internet connection is required for streaming and API access.
 4. Monitor logs (`combined.log` and `error.log`) for debugging any issues.
 
+   
+## Watch This Video 🎥
+
+[![Watch the video](https://img.youtube.com/vi/Ykl_I94HKnM/0.jpg)](https://youtu.be/Ykl_I94HKnM?si=3vMIXmJ7xZR_31l5)
+
 ## Logs
 - Application logs are stored in `combined.log`.
 - Error logs are stored in `error.log`.
